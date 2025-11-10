@@ -33,10 +33,24 @@ def ensure_disaster_folder(name: str, start_date: date, did: int) -> str:
 def create_app():
 	app = Flask(__name__)
 	load_dotenv()
-	app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+	# Ensure SECRET_KEY exists for Flask sessions; create .env if missing
+	secret_key = os.getenv('SECRET_KEY')
+	if not secret_key:
+		try:
+			# Generate a secure random key and persist to .env
+			import secrets
+			secret_key = secrets.token_hex(32)
+			env_path = BASE_DIR / '.env'
+			with open(env_path, 'a', encoding='utf-8') as f:
+				f.write(f'\nSECRET_KEY={secret_key}\n')
+		except Exception:
+			# Fallback to a dev key if filesystem is read-only
+			secret_key = 'dev-secret-key'
+	app.config['SECRET_KEY'] = secret_key
 	
 	# Configure SQLite database with proper settings to avoid locks
-	app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{BASE_DIR / "drms.db"}?check_same_thread=False'
+	# Use connect_args for SQLite thread checks; avoid duplicating in URI
+	app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{BASE_DIR / "drms.db"}'
 	app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 	app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 		'pool_pre_ping': True,
@@ -91,65 +105,100 @@ def create_tenant_models(disaster_id):
 	if prefix in _tenant_model_cache:
 		return _tenant_model_cache[prefix]
 	
+	# Reuse existing Table objects from metadata if already defined (handles Flask reloader)
+	metadata = db.Model.metadata
+	table_names = {
+		'warehouse': f'{prefix}_warehouse',
+		'relief_item': f'{prefix}_relief_item',
+		'beneficiary': f'{prefix}_beneficiary',
+		'distribution': f'{prefix}_distribution',
+	}
+	tables_exist_in_metadata = all(name in metadata.tables for name in table_names.values())
+	
 	# Create unique class names to avoid conflicts
 	warehouse_class_name = f"TenantWarehouse_{disaster_id}"
 	relief_item_class_name = f"TenantReliefItem_{disaster_id}"
 	beneficiary_class_name = f"TenantBeneficiary_{disaster_id}"
 	distribution_class_name = f"TenantDistribution_{disaster_id}"
 	
-	# Create the model classes
-	TenantWarehouse = type(warehouse_class_name, (db.Model,), {
-		'__tablename__': f'{prefix}_warehouse',
-		'__module__': __name__,
+	# Create the model classes (reuse tables if they already exist in metadata)
+	if tables_exist_in_metadata:
+		TenantWarehouse = type(warehouse_class_name, (db.Model,), {
+			'__table__': metadata.tables[table_names['warehouse']],
+			'__module__': __name__,
+			'__repr__': lambda self: f'<TenantWarehouse {self.WarehouseID}: {self.Location}>'
+		})
 		
-		'WarehouseID': db.Column(db.Integer, primary_key=True),
-		'Location': db.Column(db.String(200), nullable=False),
-		'Capacity': db.Column(db.Integer, nullable=False, default=0),
-		'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+		TenantReliefItem = type(relief_item_class_name, (db.Model,), {
+			'__table__': metadata.tables[table_names['relief_item']],
+			'__module__': __name__,
+			'__repr__': lambda self: f'<TenantReliefItem {self.ItemID}: {self.Name} ({self.Quantity})>'
+		})
 		
-		'__repr__': lambda self: f'<TenantWarehouse {self.WarehouseID}: {self.Location}>'
-	})
-	
-	TenantReliefItem = type(relief_item_class_name, (db.Model,), {
-		'__tablename__': f'{prefix}_relief_item',
-		'__module__': __name__,
+		TenantBeneficiary = type(beneficiary_class_name, (db.Model,), {
+			'__table__': metadata.tables[table_names['beneficiary']],
+			'__module__': __name__,
+			'__repr__': lambda self: f'<TenantBeneficiary {self.BeneficiaryID}: {self.Name}>'
+		})
 		
-		'ItemID': db.Column(db.Integer, primary_key=True),
-		'WarehouseID': db.Column(db.Integer, db.ForeignKey(f'{prefix}_warehouse.WarehouseID'), nullable=False),
-		'Name': db.Column(db.String(150), nullable=False),
-		'Category': db.Column(db.String(100)),
-		'Quantity': db.Column(db.Integer, nullable=False, default=0),
-		'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+		TenantDistribution = type(distribution_class_name, (db.Model,), {
+			'__table__': metadata.tables[table_names['distribution']],
+			'__module__': __name__,
+			'__repr__': lambda self: f'<TenantDistribution {self.DistID}: {self.Quantity} items>'
+		})
+	else:
+		TenantWarehouse = type(warehouse_class_name, (db.Model,), {
+			'__tablename__': table_names['warehouse'],
+			'__module__': __name__,
+			
+			'WarehouseID': db.Column(db.Integer, primary_key=True),
+			'Location': db.Column(db.String(200), nullable=False),
+			'Capacity': db.Column(db.Integer, nullable=False, default=0),
+			'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+			
+			'__repr__': lambda self: f'<TenantWarehouse {self.WarehouseID}: {self.Location}>'
+		})
 		
-		'__repr__': lambda self: f'<TenantReliefItem {self.ItemID}: {self.Name} ({self.Quantity})>'
-	})
-	
-	TenantBeneficiary = type(beneficiary_class_name, (db.Model,), {
-		'__tablename__': f'{prefix}_beneficiary',
-		'__module__': __name__,
+		TenantReliefItem = type(relief_item_class_name, (db.Model,), {
+			'__tablename__': table_names['relief_item'],
+			'__module__': __name__,
+			
+			'ItemID': db.Column(db.Integer, primary_key=True),
+			'WarehouseID': db.Column(db.Integer, db.ForeignKey(f'{table_names["warehouse"]}.WarehouseID'), nullable=False),
+			'Name': db.Column(db.String(150), nullable=False),
+			'Category': db.Column(db.String(100)),
+			'Quantity': db.Column(db.Integer, nullable=False, default=0),
+			'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+			
+			'__repr__': lambda self: f'<TenantReliefItem {self.ItemID}: {self.Name} ({self.Quantity})>'
+		})
 		
-		'BeneficiaryID': db.Column(db.Integer, primary_key=True),
-		'Name': db.Column(db.String(200), nullable=False),
-		'Location': db.Column(db.String(200)),
-		'Contact': db.Column(db.String(100)),
-		'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+		TenantBeneficiary = type(beneficiary_class_name, (db.Model,), {
+			'__tablename__': table_names['beneficiary'],
+			'__module__': __name__,
+			
+			'BeneficiaryID': db.Column(db.Integer, primary_key=True),
+			'Name': db.Column(db.String(200), nullable=False),
+			'Location': db.Column(db.String(200)),
+			'Contact': db.Column(db.String(100)),
+			'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+			
+			'__repr__': lambda self: f'<TenantBeneficiary {self.BeneficiaryID}: {self.Name}>'
+		})
 		
-		'__repr__': lambda self: f'<TenantBeneficiary {self.BeneficiaryID}: {self.Name}>'
-	})
-	
-	TenantDistribution = type(distribution_class_name, (db.Model,), {
-		'__tablename__': f'{prefix}_distribution',
-		'__module__': __name__,
-		
-		'DistID': db.Column(db.Integer, primary_key=True),
-		'BeneficiaryID': db.Column(db.Integer, db.ForeignKey(f'{prefix}_beneficiary.BeneficiaryID'), nullable=False),
-		'ItemID': db.Column(db.Integer, db.ForeignKey(f'{prefix}_relief_item.ItemID'), nullable=False),
-		'Quantity': db.Column(db.Integer, nullable=False),
-		'Date': db.Column(db.Date, nullable=False),
-		'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
-		
-		'__repr__': lambda self: f'<TenantDistribution {self.DistID}: {self.Quantity} items>'
-	})
+		TenantDistribution = type(distribution_class_name, (db.Model,), {
+			'__tablename__': table_names['distribution'],
+			'__module__': __name__,
+			
+			'DistID': db.Column(db.Integer, primary_key=True),
+			'BeneficiaryID': db.Column(db.Integer, db.ForeignKey(f'{table_names["beneficiary"]}.BeneficiaryID'), nullable=False),
+			'ItemID': db.Column(db.Integer, db.ForeignKey(f'{table_names["relief_item"]}.ItemID'), nullable=False),
+			'Quantity': db.Column(db.Integer, nullable=False),
+			'Date': db.Column(db.Date, nullable=False),
+			'CreatedAt': db.Column(db.DateTime, default=datetime.utcnow),
+			
+			'__repr__': lambda self: f'<TenantDistribution {self.DistID}: {self.Quantity} items>'
+		})
 	
 	# Add relationships after class creation
 	TenantReliefItem.warehouse = db.relationship(TenantWarehouse, backref=db.backref('items', lazy=True))
