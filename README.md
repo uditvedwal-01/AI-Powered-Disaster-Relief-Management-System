@@ -19,7 +19,7 @@ This document describes the machine learning capabilities integrated into the Di
   - Distribution activity patterns
   - Warehouse capacity utilization
 - **Risk scoring system** (0-100 scale)
-- **Automated recommendations** based on risk levels
+- **Automated recommendations** based on risk levels and
 
 ### 3. Resource Allocation Optimization
 - **Smart recommendations** for warehouse utilization
