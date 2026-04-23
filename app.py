@@ -4,7 +4,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
-from ml_service import ml_service
+from ml_service import ml_service, resource_priority_service
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,6 +77,25 @@ class Disaster(db.Model):
 	
 	def __repr__(self):
 		return f'<Disaster {self.DisasterID}: {self.Name}>'
+
+
+class ResourceRequest(db.Model):
+	"""Stores incoming resource requests with AI-assigned priority."""
+	__tablename__ = 'resource_request'
+
+	RequestID = db.Column(db.Integer, primary_key=True)
+	DisasterID = db.Column(db.Integer, db.ForeignKey('disaster.DisasterID'), nullable=False)
+	SeverityLevel = db.Column(db.String(20), nullable=False)
+	PeopleAffected = db.Column(db.Integer, nullable=False)
+	ResourceType = db.Column(db.String(50), nullable=False)
+	LocationUrgency = db.Column(db.String(20), nullable=True)
+	PredictedPriority = db.Column(db.String(20), nullable=False)
+	CreatedAt = db.Column(db.DateTime, default=datetime.utcnow)
+
+	disaster = db.relationship('Disaster', backref=db.backref('resource_requests', lazy=True))
+
+	def __repr__(self):
+		return f'<ResourceRequest {self.RequestID}: {self.PredictedPriority}>'
 
 
 # Model cache to avoid SQLAlchemy conflicts
@@ -318,12 +337,18 @@ def register_routes(app: Flask) -> None:
 		).join(
 			TenantReliefItem, TenantDistribution.ItemID == TenantReliefItem.ItemID
 		).order_by(TenantDistribution.Date.desc()).all()
+
+		# Show latest resource requests with auto-assigned priorities
+		resource_requests = ResourceRequest.query.filter_by(DisasterID=disaster_id).order_by(
+			ResourceRequest.CreatedAt.desc()
+		).limit(10).all()
 		
 		return render_template('disaster_detail.html', 
 			disaster=disaster, 
 			warehouses=warehouses, 
 			items=items, 
-			distributions=distributions)
+			distributions=distributions,
+			resource_requests=resource_requests)
 
 	@app.route('/disasters/<int:disaster_id>/resources/new', methods=['GET', 'POST'])
 	def add_resources(disaster_id: int):
@@ -443,6 +468,70 @@ def register_routes(app: Flask) -> None:
 		
 		return render_template('distribution_form.html', disaster=disaster, items=items)
 
+	@app.route('/disasters/<int:disaster_id>/requests/new', methods=['GET', 'POST'])
+	def create_resource_request(disaster_id: int):
+		"""Create a new resource request and auto-assign ML priority."""
+		disaster = Disaster.query.get_or_404(disaster_id)
+
+		if request.method == 'POST':
+			try:
+				severity_level = request.form.get('severity_level', '').strip().lower()
+				people_affected = int(request.form.get('people_affected', '0') or 0)
+				resource_type = request.form.get('resource_type', '').strip().lower()
+				location_urgency = request.form.get('location_urgency', '').strip().lower()
+
+				allowed_severity = {'low', 'medium', 'high'}
+				allowed_resource_types = {'food', 'medical', 'shelter'}
+				allowed_location_urgency = {'low', 'medium', 'high', ''}
+
+				if severity_level not in allowed_severity:
+					flash('Severity level must be low, medium, or high.', 'danger')
+					return redirect(url_for('create_resource_request', disaster_id=disaster_id))
+
+				if people_affected <= 0:
+					flash('People affected must be a positive number.', 'danger')
+					return redirect(url_for('create_resource_request', disaster_id=disaster_id))
+
+				if resource_type not in allowed_resource_types:
+					flash('Resource type must be food, medical, or shelter.', 'danger')
+					return redirect(url_for('create_resource_request', disaster_id=disaster_id))
+
+				if location_urgency not in allowed_location_urgency:
+					flash('Location urgency must be low, medium, high, or empty.', 'danger')
+					return redirect(url_for('create_resource_request', disaster_id=disaster_id))
+
+				predicted_priority = resource_priority_service.predict_priority(
+					severity_level=severity_level,
+					people_affected=people_affected,
+					resource_type=resource_type,
+					location_urgency=location_urgency or None
+				)
+
+				resource_request = ResourceRequest(
+					DisasterID=disaster_id,
+					SeverityLevel=severity_level,
+					PeopleAffected=people_affected,
+					ResourceType=resource_type,
+					LocationUrgency=location_urgency or None,
+					PredictedPriority=predicted_priority
+				)
+
+				db.session.add(resource_request)
+				db.session.commit()
+
+				flash(
+					f'Resource request created with AI-assigned priority: {predicted_priority}.',
+					'success'
+				)
+				return redirect(url_for('disaster_detail', disaster_id=disaster_id))
+
+			except Exception as e:
+				db.session.rollback()
+				flash(f'Error creating resource request: {str(e)}', 'danger')
+				return redirect(url_for('create_resource_request', disaster_id=disaster_id))
+
+		return render_template('resource_request_form.html', disaster=disaster)
+
 	@app.route('/disasters/<int:disaster_id>/tables')
 	def show_disaster_tables(disaster_id: int):
 		"""Show all tables for a specific disaster (Multi-tenant view)"""
@@ -531,6 +620,28 @@ def register_routes(app: Flask) -> None:
 		ml_data = ml_service.get_prediction_data(disaster_id, warehouses, items, beneficiaries, distributions)
 		
 		return jsonify(ml_data)
+
+	@app.route('/test-ml')
+	def test_ml_endpoint():
+		"""
+		Basic ML test endpoint using one sample request input.
+		Useful for quickly checking model behavior via browser/API.
+		"""
+		sample_input = {
+			"severity_level": "high",
+			"people_affected": 250,
+			"resource_type": "medical",
+			"location_urgency": "high"
+		}
+
+		predicted_priority = resource_priority_service.predict_priority(**sample_input)
+
+		return jsonify({
+			"status": "success",
+			"message": "ML model test completed.",
+			"input": sample_input,
+			"predicted_priority": predicted_priority
+		})
 
 
 app = create_app()

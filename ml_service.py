@@ -4,7 +4,12 @@ Handles ML operations and data processing
 """
 
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
+import numpy as np
+import joblib
 from ml_models import ml_predictor
+from ml_model import train_and_save_model, MODEL_PATH, encode_features
 
 
 class MLService:
@@ -257,3 +262,79 @@ class MLService:
 
 # Global ML service instance
 ml_service = MLService()
+
+
+class ResourcePriorityService:
+    """
+    Dedicated service for request-priority predictions.
+    Loads a saved ML model and predicts High/Medium/Low priority.
+    """
+
+    def __init__(self, model_path: Path = MODEL_PATH):
+        self.model_path = model_path
+        self.model = None
+        self._load_or_train_model()
+
+    def _load_or_train_model(self):
+        """
+        Load existing model. If missing/corrupted, train a new one.
+        """
+        try:
+            if not self.model_path.exists():
+                train_and_save_model(self.model_path)
+            self.model = joblib.load(self.model_path)
+        except Exception:
+            # Fallback path keeps the app usable for beginners.
+            train_and_save_model(self.model_path)
+            self.model = joblib.load(self.model_path)
+
+    def predict_priority(
+        self,
+        severity_level: str,
+        people_affected: int,
+        resource_type: str,
+        location_urgency: Optional[str] = None,
+    ) -> str:
+        """
+        Predict priority for a new request record.
+        """
+        if self.model is None:
+            self._load_or_train_model()
+
+        # Build the input in fixed feature order and 2D shape.
+        features = encode_features(
+            severity_level=severity_level,
+            people_affected=people_affected,
+            resource_type=resource_type,
+            location_urgency=location_urgency or "medium",
+        )
+        sample_2d = np.array([features])
+
+        try:
+            prediction = self.model.predict(sample_2d)[0]
+        except Exception:
+            # If old/incompatible model format exists, retrain and retry once.
+            train_and_save_model(self.model_path)
+            self.model = joblib.load(self.model_path)
+            prediction = self.model.predict(sample_2d)[0]
+
+        return self._to_priority_label(prediction)
+
+    def _to_priority_label(self, prediction) -> str:
+        """
+        Normalize predicted output to High/Medium/Low text.
+        """
+        if isinstance(prediction, str):
+            pred = prediction.strip().lower()
+            if pred == "high":
+                return "High"
+            if pred == "medium":
+                return "Medium"
+            return "Low"
+
+        label_map = {2: "High", 1: "Medium", 0: "Low"}
+        return label_map.get(int(prediction), "Low")
+
+
+# Global request-priority ML service
+resource_priority_service = ResourcePriorityService()

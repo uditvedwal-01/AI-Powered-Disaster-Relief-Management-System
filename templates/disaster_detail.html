@@ -41,6 +41,15 @@
     </nav>
 
     <div class="container py-4 pb-5">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="mb-3">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} shadow-sm">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
       <header class="mb-4">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
           <div>
@@ -139,6 +148,38 @@
         </div>
       </div>
 
+      <div class="card p-3 mt-4 shadow-sm border-0">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0">Recent Resource Requests (AI Priority)</h5>
+          <span class="badge text-bg-info">{{ resource_requests|length }} Latest</span>
+        </div>
+        <ul class="list-group list-group-flush">
+          {% for req in resource_requests %}
+          <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <strong>{{ req.ResourceType|title }}</strong>
+              <small class="text-muted">
+                • Severity: {{ req.SeverityLevel|title }}
+                • People: {{ req.PeopleAffected }}
+                • Urgency: {{ (req.LocationUrgency or 'N/A')|title }}
+              </small>
+            </div>
+            {% set pr = (req.PredictedPriority or '')|lower %}
+            {% if pr == 'high' %}
+              {% set pr_class = 'text-bg-danger' %}
+            {% elif pr == 'medium' %}
+              {% set pr_class = 'text-bg-warning' %}
+            {% else %}
+              {% set pr_class = 'text-bg-success' %}
+            {% endif %}
+            <span class="badge {{ pr_class }}">Priority: {{ req.PredictedPriority }}</span>
+          </li>
+          {% else %}
+          <li class="list-group-item text-muted">No resource requests recorded yet.</li>
+          {% endfor %}
+        </ul>
+      </div>
+
       <div class="mt-4 d-flex flex-wrap gap-3">
         <a
           class="btn btn-success"
@@ -149,6 +190,11 @@
           class="btn btn-primary"
           href="{{ url_for('distribute', disaster_id=disaster.DisasterID) }}"
           >Record Distribution</a
+        >
+        <a
+          class="btn btn-info"
+          href="{{ url_for('create_resource_request', disaster_id=disaster.DisasterID) }}"
+          >New Resource Request (AI Priority)</a
         >
       </div>
     </div>
