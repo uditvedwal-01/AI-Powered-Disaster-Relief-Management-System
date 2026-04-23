@@ -1,153 +1,136 @@
-# Relief Matrix : AI-Powered-Disaster-Relief-Management-System
+# Relief Matrix: AI-Powered Disaster Relief Management System
 
 ## Overview
 
-This document describes the machine learning capabilities integrated into the Disaster Resource Management System. The ML components provide intelligent predictions, risk assessments, and optimization recommendations for disaster relief operations.
+Relief Matrix is a Flask-based disaster relief management system for tracking disasters, warehouses, resources, beneficiaries, and distributions.  
+It now includes **ML-based resource request prioritization** and existing analytics features (demand, risk, trends, optimization).
 
-## Features
+## Core Features
 
-### 1. Demand Forecasting
-- **AI-powered predictions** for resource demand based on historical data
-- **Gradient Boosting Regressor** for accurate demand forecasting
-- **Fallback heuristics** when insufficient data is available
-- **Daily average calculations** for better planning
+- Multi-disaster management with tenant-style data separation
+- Resource and warehouse tracking
+- Distribution recording with stock updates
+- Analytics and prediction dashboard
+- **AI priority prediction for new resource requests**
 
-### 2. Risk Assessment
-- **Multi-factor risk analysis** considering:
-  - Stock levels and availability
-  - Beneficiary to resource ratios
-  - Distribution activity patterns
-  - Warehouse capacity utilization
-- **Risk scoring system** (0-100 scale)
-- **Automated recommendations** based on risk levels and
+## New ML Priority Prediction (Latest Update)
 
-### 3. Resource Allocation Optimization
-- **Smart recommendations** for warehouse utilization
-- **Item demand analysis** to identify high/low demand items
-- **Capacity optimization** suggestions
-- **Redistribution recommendations**
+When a new resource request is submitted, the system now:
 
-### 4. Data Quality Assessment
-- **Automatic data quality evaluation**
-- **Issue identification** and recommendations
-- **Data completeness scoring**
-- **Quality improvement suggestions**
+1. Collects request inputs:
+   - `severity_level` (`low` / `medium` / `high`)
+   - `people_affected`
+   - `resource_type` (`food` / `medical` / `shelter`)
+   - `location_urgency` (`low` / `medium` / `high`, optional)
+2. Encodes features into numeric format:
+   - severity: `low=0`, `medium=1`, `high=2`
+   - resource_type: `food=0`, `medical=1`, `shelter=2`
+   - location_urgency: `low=0`, `medium=1`, `high=2`
+3. Sends model input as a **2D array**:
+   - `[[severity, people_affected, resource_type, location_urgency]]`
+4. Predicts priority:
+   - `High` / `Medium` / `Low`
+5. Stores prediction in the database (`ResourceRequest` table).
 
-### 5. Trend Analysis
-- **Distribution pattern analysis**
-- **Trend direction detection** (increasing/decreasing/stable)
-- **Peak activity identification**
-- **Historical performance metrics**
+## ML Modules
 
-## Technical Implementation
+- `ml_model.py`
+  - Synthetic dataset generation
+  - Feature encoding helper
+  - Train + save model (`joblib`)
+  - Validation helper (accuracy + confusion matrix)
+- `ml_service.py`
+  - Runtime model loading
+  - Auto-retrain fallback if model file is missing/corrupted/incompatible
+  - Priority prediction service used by Flask routes
+- `test_ml.py`
+  - Runs sample predictions
+  - Prints encoded input + predicted output
+  - Prints validation metrics
 
-### ML Models
-- **Gradient Boosting Regressor** for demand forecasting
-- **Feature engineering** with temporal, categorical, and numerical features
-- **Model training** with automatic retraining when sufficient data is available
-- **Fallback mechanisms** for scenarios with limited data
+## API Endpoints
 
-### Data Processing
-- **Real-time data processing** from disaster-specific tables
-- **Feature extraction** from distributions, items, beneficiaries, and warehouses
-- **Data validation** and quality checks
-- **Scalable processing** for multiple disasters
+- `GET /disasters/<id>/predict/api`  
+  Returns analytics prediction data as JSON.
 
-### API Integration
-- **RESTful API endpoints** for ML predictions
-- **JSON responses** with structured prediction data
-- **Error handling** and graceful degradation
-- **Performance optimization** for real-time predictions
+- `GET /test-ml`  
+  Runs a sample ML priority prediction and returns JSON result.
 
-## Usage
+## Setup
 
-### Accessing ML Features
-1. Navigate to any disaster's detail page
-2. Click on the "Predict" tab
-3. View AI-powered insights and recommendations
+### Recommended (Windows PowerShell)
 
-### API Endpoints
-- `GET /disasters/<id>/predict/api` - Get ML predictions as JSON
-
-### Data Requirements
-- **Minimum 5 distributions** for basic ML training
-- **10+ distributions** recommended for accurate predictions
-- **Recent data** (within 30 days) for best results
-
-## Visualization
-
-### Interactive Charts
-- **Demand forecasting charts** showing current vs predicted demand
-- **Risk assessment gauges** with color-coded risk levels
-- **Trend analysis charts** showing distribution patterns over time
-- **Warehouse utilization charts** for capacity management
-
-### Real-time Updates
-- **Automatic chart updates** when new data is available
-- **Responsive design** for different screen sizes
-- **Interactive tooltips** with detailed information
-
-## Configuration
-
-### Dependencies
-```
-scikit-learn==1.3.2
-pandas==2.1.4
-numpy==1.24.4
-matplotlib==3.8.2
-seaborn==0.13.0
-plotly==5.17.0
-joblib==1.3.2
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_env.ps1
 ```
 
-### Installation
+This script:
+- creates `.venv`
+- activates it
+- upgrades pip/setuptools/wheel
+- installs dependencies from `requirements.txt`
+
+### Manual Setup (Any Platform)
+
 ```bash
+python -m venv .venv
+```
+
+Activate environment:
+- Windows PowerShell: `.\.venv\Scripts\Activate.ps1`
+- Windows CMD: `.\.venv\Scripts\activate.bat`
+- macOS/Linux: `source .venv/bin/activate`
+
+Then install:
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-## Performance Considerations
+## Environment Check
 
-### Model Training
-- **Automatic training** when sufficient data is available
-- **Caching** of trained models for performance
-- **Incremental learning** for continuous improvement
+Use:
 
-### Data Processing
-- **Efficient data queries** with optimized database access
-- **Batch processing** for large datasets
-- **Memory management** for large-scale operations
+```bash
+python check_env.py
+```
 
-## Future Enhancements
+It verifies imports for:
+- Flask
+- scikit-learn
+- joblib
 
-### Planned Features
-- **Deep learning models** for more complex patterns
-- **Real-time streaming** predictions
-- **Multi-disaster** cross-learning
-- **Advanced visualization** with 3D charts
-- **Mobile optimization** for field operations
+## ML Testing
 
-### Integration Opportunities
-- **External data sources** (weather, population density)
-- **IoT sensors** for real-time monitoring
-- **Geographic analysis** for location-based predictions
-- **Social media sentiment** analysis for demand prediction
+Run:
+
+```bash
+python test_ml.py
+```
+
+It will:
+- ensure model exists (or train one)
+- validate model with train/test split
+- print accuracy score
+- print confusion matrix
+- run sample cases and print predicted priority
+
+## Dependencies
+
+See `requirements.txt` (updated for newer Python versions, including Python 3.13-friendly ranges), including:
+- `scikit-learn>=1.4.0`
+- `joblib>=1.4.0`
+- `numpy>=2.1.0`
+- `pandas>=2.2.0`
 
 ## Troubleshooting
 
-### Common Issues
-1. **"ML Model Not Trained"** - Add more distribution data
-2. **"Poor Data Quality"** - Follow recommendations to improve data
-3. **"Insufficient Data"** - Record more activities in the system
-
-### Performance Issues
-- **Slow predictions** - Check database performance
-- **Memory usage** - Monitor system resources
-- **Chart loading** - Ensure stable internet connection
-
-## Support
-
-For technical support or feature requests, please refer to the main system documentation or contact the development team.
-
----
-
-*This ML integration enhances the Disaster Resource Management System with intelligent predictions and optimization capabilities, making disaster relief operations more efficient and effective.*
+- If `pip install -r requirements.txt` fails:
+  - ensure you are inside virtual environment
+  - run `python -m pip install --upgrade pip setuptools wheel`
+  - retry install
+- If `test_ml.py` fails to load model:
+  - script/service auto-retrains model and retries
+- If Flask is running and code changes are not reflected:
+  - stop and restart `python app.py`
